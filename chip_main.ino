@@ -10,6 +10,8 @@
  **/
  
 #include<Stepper.h>
+#include <avr/sleep.h>
+
 const int stepsPerRev = 180; //Match motor config
 const int en_pin_ap = 6; //Enable pin for aperture driver
 const int half_po = 4; //Half press out
@@ -23,7 +25,14 @@ long int time1=0,time2=0;
 int aperture_step=1; //Step size for aperture, initialize to 1
 char a='K';
 
+//Implement sleep mode
+bool sleepEnable = false;
+unsigned long int timeSleep = 0;
+const  unsigned int sleepThresholdMin = 20;
+unsigned long int sleepThresholdms = sleepThresholdMin*60*1000;
 
+//Toggle
+bool toggleState = false;
 
 Stepper aperture(stepsPerRev,7,8,9,10); //Pin config for aperture motor
 
@@ -49,6 +58,14 @@ void setup() {
 }
 
 void loop() {
+  //Sleep timer
+  timeSleep += 1;
+  if (timeSleep >= sleepThresholdms && sleepEnable){
+    //Sleep code
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN); 
+    sleep_enable();  
+    sleep_mode();  
+  }
   time1=0;
   time2=0;
   half_p = analogRead(A1);
@@ -56,13 +73,23 @@ void loop() {
   char x=Serial.read();
   if((x>='K')&&(x<='Z')){  //K to Z used for aperture symbols
     a=x;
+    timeSleep=0;
   }
-  if(analogRead(A4)<5){
-    aperture_set(aperture_step);
-    AS:
-    if(analogRead(A4)<5)
-      goto AS;
-    aperture_reset();
+  if(analogRead(A4)<7){
+    timeSleep=0;
+    //aperture_req();
+    toggleState = !toggleState;
+    if (toggleState){
+      aperture_req(true);
+      delay(10);
+      aperture_set(aperture_step);
+    }
+    if(!toggleState){
+      aperture_reset();
+    }
+    while(analogRead(A4)<7)
+      delay(10);
+    
     
   }
   
@@ -74,10 +101,11 @@ void loop() {
   }
   if(half_p < p_threshold){ //Half pressed
     digitalWrite(half_po,HIGH);
+    timeSleep = 0;
     
-
+    //aperture_reset();
     if((analogRead(A3) < p_threshold)&&(analogRead(A1) < p_threshold)){ //Full pressed after Half pressed
-      aperture_req();
+      aperture_req(false);
       digitalWrite(half_po,LOW); //Unpress button first
       digitalWrite(lens_enbar,HIGH); //Disable lens
       delay(50);
@@ -94,7 +122,7 @@ void loop() {
       time1 = millis();          
       while(analogRead(A5)<10){
         time2=millis();
-        if((time2-time1)>5000){
+        if((time2-time1)>25000){
           break;
         }
       }
@@ -108,12 +136,22 @@ void loop() {
 
 }
 
-void aperture_req(){  //Requests aperture value through Serial Bus
+void aperture_req(bool wait){  //Requests aperture value through Serial Bus
   Serial.println('A');
+  delay(10);
+  while(!Serial.available() && wait==true ){
+    //wait till response is given by second arduino chip
+  }
+  char x = Serial.read();
+  if((x>='K')&&(x<='Z')){  //K to Z used for aperture symbols
+    a=x;
+    timeSleep=0;
+  }
+  
   //delay(30);
   {
     //a = Serial.read();
-    Serial.println(a);
+    //Serial.println(a);
     switch(a){
       case 'K': 
         aperture_step = 1; //f2.0
@@ -182,4 +220,7 @@ void aperture_reset(){ // Reset aperture to widest(full open iris)
   digitalWrite(en_pin_ap,LOW);
   
 }
+
+
+
 
